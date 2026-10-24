@@ -23,11 +23,13 @@ public class LiteVisualsClient implements ClientModInitializer {
 
     public static boolean hudEnabled = true;
     public static boolean fpsEnabled = true;
-    public static boolean coordinatesEnabled = true;
-    public static boolean directionEnabled = true;
-    public static boolean targetInfoEnabled = true;
+    public static boolean coordsEnabled = true;
+    public static boolean facingEnabled = true;
+    public static boolean targetEnabled = true;
 
     public static boolean hitMarkerEnabled = true;
+
+    public static int accentColor = 0xFFB56BFF;
     public static int hitMarkerColor = 0xFFFF4040;
     public static float hitMarkerSize = 8.0f;
     public static int hitMarkerDurationMs = 450;
@@ -89,56 +91,56 @@ public class LiteVisualsClient implements ClientModInitializer {
             int white = 0xFFFFFFFF;
 
             if (fpsEnabled) {
-                drawContext.drawText(
-                        client.textRenderer,
-                        "FPS: " + client.getCurrentFps(),
-                        x, y, white, true
-                );
+                drawText(drawContext, "FPS: " + client.getCurrentFps(),
+                        x, y, white);
                 y += 12;
             }
 
-            if (coordinatesEnabled) {
-                String coords = String.format(
+            if (coordsEnabled) {
+                String coordinates = String.format(
+                        java.util.Locale.ROOT,
                         "XYZ: %d %d %d",
                         MathHelper.floor(client.player.getX()),
                         MathHelper.floor(client.player.getY()),
                         MathHelper.floor(client.player.getZ())
                 );
 
-                drawContext.drawText(
-                        client.textRenderer, coords, x, y, white, true
-                );
+                drawText(drawContext, coordinates, x, y, white);
                 y += 12;
             }
 
-            if (directionEnabled) {
-                String direction = getDirection(client.player.getYaw());
-
-                drawContext.drawText(
-                        client.textRenderer,
-                        "Facing: " + direction,
-                        x, y, white, true
-                );
+            if (facingEnabled) {
+                drawText(drawContext,
+                        "Facing: " + getDirection(client.player.getYaw()),
+                        x, y, white);
                 y += 12;
             }
 
-            if (targetInfoEnabled) {
+            if (targetEnabled) {
                 Entity target = getTargetEntity();
 
                 if (target instanceof LivingEntity livingTarget) {
-                    String targetText = "Target: " + livingTarget.getName().getString()
-                            + " | HP: " + String.format(
-                                    "%.1f", livingTarget.getHealth()
+                    String targetText = "Target: "
+                            + livingTarget.getName().getString()
+                            + " | HP: "
+                            + String.format(
+                                    java.util.Locale.ROOT,
+                                    "%.1f",
+                                    livingTarget.getHealth()
                             );
 
-                    drawContext.drawText(
-                            client.textRenderer,
-                            targetText,
-                            x, y, 0xFFFF7777, true
-                    );
+                    drawText(drawContext, targetText, x, y, 0xFFFF7777);
                 }
             }
         });
+    }
+
+    private static void drawText(
+            DrawContext context, String value, int x, int y, int color) {
+        context.drawTextWithShadow(
+                MinecraftClient.getInstance().textRenderer,
+                value, x, y, color
+        );
     }
 
     private static void drawHitMarker(DrawContext context) {
@@ -146,9 +148,7 @@ public class LiteVisualsClient implements ClientModInitializer {
             return;
         }
 
-        long remaining = hitMarkerUntilMs - System.currentTimeMillis();
-
-        if (remaining <= 0) {
+        if (System.currentTimeMillis() >= hitMarkerUntilMs) {
             return;
         }
 
@@ -157,39 +157,48 @@ public class LiteVisualsClient implements ClientModInitializer {
         int centerX = client.getWindow().getScaledWidth() / 2;
         int centerY = client.getWindow().getScaledHeight() / 2;
 
-        float size = Math.max(2.0f, Math.min(hitMarkerSize, 30.0f));
+        int size = MathHelper.clamp(
+                Math.round(hitMarkerSize), 2, 30
+        );
+        int gap = Math.max(3, size / 2);
+        int thickness = Math.max(1, size / 5);
         int color = hitMarkerColor;
 
-        int thickness = Math.max(1, Math.round(size / 5.0f));
-        int gap = Math.max(2, Math.round(size / 2.5f));
+        // Верхний левый штрих.
+        context.fill(
+                centerX - gap - size / 2,
+                centerY - gap - size / 2,
+                centerX - gap + thickness,
+                centerY - gap + thickness,
+                color
+        );
 
-        // Four short diagonal strokes around the crosshair.
-        drawStroke(context, centerX - gap - thickness, centerY - gap - thickness,
-                centerX - gap + size / 3, centerY - gap + size / 3, thickness, color);
+        // Верхний правый штрих.
+        context.fill(
+                centerX + gap - thickness,
+                centerY - gap - size / 2,
+                centerX + gap + size / 2,
+                centerY - gap + thickness,
+                color
+        );
 
-        drawStroke(context, centerX + gap - size / 3, centerY - gap + size / 3,
-                centerX + gap + thickness, centerY - gap - thickness, thickness, color);
+        // Нижний левый штрих.
+        context.fill(
+                centerX - gap - size / 2,
+                centerY + gap - thickness,
+                centerX - gap + thickness,
+                centerY + gap + size / 2,
+                color
+        );
 
-        drawStroke(context, centerX - gap - thickness, centerY + gap + thickness,
-                centerX - gap + size / 3, centerY + gap - size / 3, thickness, color);
-
-        drawStroke(context, centerX + gap - size / 3, centerY + gap - size / 3,
-                centerX + gap + thickness, centerY + gap + thickness, thickness, color);
-    }
-
-    private static void drawStroke(
-            DrawContext context,
-            float x1, float y1,
-            float x2, float y2,
-            int thickness,
-            int color
-    ) {
-        int left = Math.round(Math.min(x1, x2));
-        int top = Math.round(Math.min(y1, y2));
-        int right = Math.round(Math.max(x1, x2)) + thickness;
-        int bottom = Math.round(Math.max(y1, y2)) + thickness;
-
-        context.fill(left, top, right, bottom, color);
+        // Нижний правый штрих.
+        context.fill(
+                centerX + gap - thickness,
+                centerY + gap - thickness,
+                centerX + gap + size / 2,
+                centerY + gap + size / 2,
+                color
+        );
     }
 
     private static String getDirection(float yaw) {
