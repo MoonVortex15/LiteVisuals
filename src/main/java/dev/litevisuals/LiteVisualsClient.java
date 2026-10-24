@@ -4,22 +4,18 @@ package dev.litevisuals;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
-
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
 
 public class LiteVisualsClient implements ClientModInitializer {
     public static KeyBinding openMenuKey;
@@ -33,26 +29,10 @@ public class LiteVisualsClient implements ClientModInitializer {
 
     public static boolean hitMarkerEnabled = true;
     public static int hitMarkerColor = 0xFFFF4040;
-    public static float hitMarkerSize = 0.14f;
+    public static float hitMarkerSize = 8.0f;
     public static int hitMarkerDurationMs = 450;
 
     private static long hitMarkerUntilMs = 0L;
-
-    private static final List<HitMark> HIT_MARKS = new ArrayList<>();
-
-    private static class HitMark {
-        final Vec3d position;
-        final long expiresAt;
-        final int color;
-        final float size;
-
-        HitMark(Vec3d position, long expiresAt, int color, float size) {
-            this.position = position;
-            this.expiresAt = expiresAt;
-            this.color = color;
-            this.size = size;
-        }
-    }
 
     @Override
     public void onInitializeClient() {
@@ -80,84 +60,150 @@ public class LiteVisualsClient implements ClientModInitializer {
             while (toggleHudKey.wasPressed()) {
                 hudEnabled = !hudEnabled;
             }
-
-            long now = System.currentTimeMillis();
-            HIT_MARKS.removeIf(mark -> now >= mark.expiresAt);
-
-            if (!hitMarkerEnabled) {
-                HIT_MARKS.clear();
-            }
         });
 
         AttackEntityCallback.EVENT.register((player, world, hand, entity, hitResult) -> {
             if (world.isClient && hitMarkerEnabled && entity instanceof LivingEntity) {
-                Vec3d position;
-
-                if (hitResult instanceof EntityHitResult entityHit) {
-                    position = entityHit.getPos();
-                } else {
-                    position = entity.getBoundingBox().getCenter();
-                }
-
-                long now = System.currentTimeMillis();
-                hitMarkerUntilMs = now + Math.max(50, hitMarkerDurationMs);
-
-                HIT_MARKS.add(new HitMark(
-                        position,
-                        now + Math.max(50, hitMarkerDurationMs),
-                        hitMarkerColor,
-                        Math.max(0.02f, hitMarkerSize)
-                ));
-
-                if (HIT_MARKS.size() > 30) {
-                    HIT_MARKS.remove(0);
-                }
+                hitMarkerUntilMs = System.currentTimeMillis()
+                        + Math.max(50, hitMarkerDurationMs);
             }
 
             return ActionResult.PASS;
         });
 
-        WorldRenderEvents.AFTER_ENTITIES.register(context -> {
+        HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
             MinecraftClient client = MinecraftClient.getInstance();
 
-            if (client.world == null || client.player == null || !hitMarkerEnabled) {
+            if (client.player == null || client.world == null) {
                 return;
             }
 
-            long now = System.currentTimeMillis();
-            Iterator<HitMark> iterator = HIT_MARKS.iterator();
+            drawHitMarker(drawContext);
 
-            while (iterator.hasNext()) {
-                HitMark mark = iterator.next();
+            if (!hudEnabled) {
+                return;
+            }
 
-                if (now >= mark.expiresAt) {
-                    iterator.remove();
-                    continue;
+            int x = 8;
+            int y = 8;
+            int white = 0xFFFFFFFF;
+
+            if (fpsEnabled) {
+                drawContext.drawText(
+                        client.textRenderer,
+                        "FPS: " + client.getCurrentFps(),
+                        x, y, white, true
+                );
+                y += 12;
+            }
+
+            if (coordinatesEnabled) {
+                String coords = String.format(
+                        "XYZ: %d %d %d",
+                        MathHelper.floor(client.player.getX()),
+                        MathHelper.floor(client.player.getY()),
+                        MathHelper.floor(client.player.getZ())
+                );
+
+                drawContext.drawText(
+                        client.textRenderer, coords, x, y, white, true
+                );
+                y += 12;
+            }
+
+            if (directionEnabled) {
+                String direction = getDirection(client.player.getYaw());
+
+                drawContext.drawText(
+                        client.textRenderer,
+                        "Facing: " + direction,
+                        x, y, white, true
+                );
+                y += 12;
+            }
+
+            if (targetInfoEnabled) {
+                Entity target = getTargetEntity();
+
+                if (target instanceof LivingEntity livingTarget) {
+                    String targetText = "Target: " + livingTarget.getName().getString()
+                            + " | HP: " + String.format(
+                                    "%.1f", livingTarget.getHealth()
+                            );
+
+                    drawContext.drawText(
+                            client.textRenderer,
+                            targetText,
+                            x, y, 0xFFFF7777, true
+                    );
                 }
-
-                // HitMarker positions are stored in world coordinates.
-                // The renderer is handled by the screen overlay below.
             }
         });
     }
 
-    public static boolean isHitMarkerVisible() {
-        return hitMarkerEnabled && System.currentTimeMillis() < hitMarkerUntilMs;
-    }
+    private static void drawHitMarker(DrawContext context) {
+        if (!hitMarkerEnabled) {
+            return;
+        }
 
-    public static long getHitMarkerRemainingMs() {
-        return Math.max(0L, hitMarkerUntilMs - System.currentTimeMillis());
-    }
+        long remaining = hitMarkerUntilMs - System.currentTimeMillis();
 
-    public static void clearHitMarkers() {
-        HIT_MARKS.clear();
-        hitMarkerUntilMs = 0L;
-    }
+        if (remaining <= 0) {
+            return;
+        }
 
-    public static boolean isTargetingLivingEntity() {
         MinecraftClient client = MinecraftClient.getInstance();
-        return client.crosshairTarget instanceof EntityHitResult hit
-                && hit.getEntity() instanceof LivingEntity;
+
+        int centerX = client.getWindow().getScaledWidth() / 2;
+        int centerY = client.getWindow().getScaledHeight() / 2;
+
+        float size = Math.max(2.0f, Math.min(hitMarkerSize, 30.0f));
+        int color = hitMarkerColor;
+
+        int thickness = Math.max(1, Math.round(size / 5.0f));
+        int gap = Math.max(2, Math.round(size / 2.5f));
+
+        // Four short diagonal strokes around the crosshair.
+        drawStroke(context, centerX - gap - thickness, centerY - gap - thickness,
+                centerX - gap + size / 3, centerY - gap + size / 3, thickness, color);
+
+        drawStroke(context, centerX + gap - size / 3, centerY - gap + size / 3,
+                centerX + gap + thickness, centerY - gap - thickness, thickness, color);
+
+        drawStroke(context, centerX - gap - thickness, centerY + gap + thickness,
+                centerX - gap + size / 3, centerY + gap - size / 3, thickness, color);
+
+        drawStroke(context, centerX + gap - size / 3, centerY + gap - size / 3,
+                centerX + gap + thickness, centerY + gap + thickness, thickness, color);
+    }
+
+    private static void drawStroke(
+            DrawContext context,
+            float x1, float y1,
+            float x2, float y2,
+            int thickness,
+            int color
+    ) {
+        int left = Math.round(Math.min(x1, x2));
+        int top = Math.round(Math.min(y1, y2));
+        int right = Math.round(Math.max(x1, x2)) + thickness;
+        int bottom = Math.round(Math.max(y1, y2)) + thickness;
+
+        context.fill(left, top, right, bottom, color);
+    }
+
+    private static String getDirection(float yaw) {
+        float normalized = MathHelper.wrapDegrees(yaw);
+
+        if (normalized >= -45 && normalized < 45) {
+            return "South";
+        } else if (normalized >= 45 && normalized < 135) {
+            return "West";
+        } else if (normalized >= -135 && normalized < -45) {
+            return "East";
+        } else {
+            return "North";
+        }
     }
 
     public static Entity getTargetEntity() {
@@ -168,5 +214,9 @@ public class LiteVisualsClient implements ClientModInitializer {
         }
 
         return null;
+    }
+
+    public static void clearHitMarker() {
+        hitMarkerUntilMs = 0L;
     }
 }
