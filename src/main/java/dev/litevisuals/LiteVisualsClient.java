@@ -13,16 +13,14 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 
+import org.joml.Matrix4f;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
@@ -113,17 +111,14 @@ public class LiteVisualsClient implements ClientModInitializer {
             }
 
             if (pendingTarget != null) {
-                if (now - pendingTime > 800
-                        || !pendingTarget.isAlive()) {
+                if (now - pendingTime > 800 || !pendingTarget.isAlive()) {
                     pendingTarget = null;
                     pendingPosition = null;
                 } else if (pendingTarget instanceof LivingEntity living
                         && living.hurtTime > previousHurtTime) {
 
                     if (hitMarkerEnabled && pendingPosition != null) {
-                        HIT_MARKS.add(
-                            new HitMark(pendingPosition, now)
-                        );
+                        HIT_MARKS.add(new HitMark(pendingPosition, now));
                     }
 
                     pendingTarget = null;
@@ -181,6 +176,7 @@ public class LiteVisualsClient implements ClientModInitializer {
             VertexConsumer lines =
                 consumers.getBuffer(RenderLayer.getLines());
 
+            Matrix4f matrix = matrices.peek().getPositionMatrix();
             long now = System.currentTimeMillis();
 
             for (HitMark mark : HIT_MARKS) {
@@ -194,30 +190,48 @@ public class LiteVisualsClient implements ClientModInitializer {
                 Vec3d p = mark.position;
                 float size = Math.max(0.02f, hitMarkerSize);
 
-                Box box = new Box(
-                    p.x - size, p.y - size, p.z - size,
-                    p.x + size, p.y + size, p.z + size
-                );
-
                 int color = hitMarkerColor;
                 float red = ((color >> 16) & 255) / 255.0f;
                 float green = ((color >> 8) & 255) / 255.0f;
                 float blue = (color & 255) / 255.0f;
                 float alpha = 1.0f - progress;
 
-                WorldRenderer.drawBox(
-                    matrices,
-                    lines,
-                    box,
-                    red,
-                    green,
-                    blue,
-                    alpha
-                );
+                drawLine(lines, matrix,
+                    p.add(-size, 0, 0), p.add(size, 0, 0),
+                    red, green, blue, alpha);
+
+                drawLine(lines, matrix,
+                    p.add(0, -size, 0), p.add(0, size, 0),
+                    red, green, blue, alpha);
+
+                drawLine(lines, matrix,
+                    p.add(0, 0, -size), p.add(0, 0, size),
+                    red, green, blue, alpha);
             }
 
             matrices.pop();
         });
+    }
+
+    private static void drawLine(
+            VertexConsumer vertices,
+            Matrix4f matrix,
+            Vec3d from,
+            Vec3d to,
+            float red,
+            float green,
+            float blue,
+            float alpha
+    ) {
+        vertices.vertex(matrix,
+                (float) from.x, (float) from.y, (float) from.z)
+            .color(red, green, blue, alpha)
+            .normal(0.0f, 1.0f, 0.0f);
+
+        vertices.vertex(matrix,
+                (float) to.x, (float) to.y, (float) to.z)
+            .color(red, green, blue, alpha)
+            .normal(0.0f, 1.0f, 0.0f);
     }
 
     private static void renderHud(DrawContext context) {
@@ -241,61 +255,46 @@ public class LiteVisualsClient implements ClientModInitializer {
 
         int panelHeight = 20 + lines * 12;
 
-        context.fill(
-            x - 5, y - 5, x + 160, y + panelHeight,
-            0xC9101020
-        );
+        context.fill(x - 5, y - 5, x + 160, y + panelHeight,
+            0xC9101020);
         context.fill(x - 5, y - 5, x + 160, y - 2, accentColor);
 
-        context.drawText(
-            client.textRenderer, "LITEVISUALS",
-            x, y, accentColor, false
-        );
+        context.drawText(client.textRenderer, "LITEVISUALS",
+            x, y, accentColor, false);
         y += 14;
 
         if (fpsEnabled) {
-            context.drawText(
-                client.textRenderer,
+            context.drawText(client.textRenderer,
                 "FPS: " + client.getCurrentFps(),
-                x, y, white, false
-            );
+                x, y, white, false);
             y += 12;
         }
 
         if (coordsEnabled) {
-            context.drawText(
-                client.textRenderer,
-                String.format(
-                    Locale.ROOT,
+            context.drawText(client.textRenderer,
+                String.format(Locale.ROOT,
                     "Коорд.: %.1f / %.1f / %.1f",
                     client.player.getX(),
                     client.player.getY(),
-                    client.player.getZ()
-                ),
-                x, y, white, false
-            );
+                    client.player.getZ()),
+                x, y, white, false);
             y += 12;
         }
 
         if (facingEnabled) {
-            context.drawText(
-                client.textRenderer,
-                "Направление: "
-                    + client.player.getHorizontalFacing().asString(),
-                x, y, white, false
-            );
+            context.drawText(client.textRenderer,
+                "Направление: " +
+                    client.player.getHorizontalFacing().asString(),
+                x, y, white, false);
             y += 12;
         }
 
         Entity target = client.targetedEntity;
 
         if (targetEnabled && target != null) {
-            context.drawText(
-                client.textRenderer,
+            context.drawText(client.textRenderer,
                 "Цель: " + target.getName().getString(),
-                x, y, 0xFFFFD166, false
-            );
+                x, y, 0xFFFFD166, false);
         }
     }
 }
-
