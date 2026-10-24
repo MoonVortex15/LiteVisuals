@@ -28,7 +28,7 @@ public class LiteVisualsClient implements ClientModInitializer {
                 "key.litevisuals.toggle_hud",
                 InputUtil.Type.KEYSYM,
                 GLFW.GLFW_KEY_H,
-                KeyBinding.Category.MISC
+                "category.litevisuals"
         ));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
