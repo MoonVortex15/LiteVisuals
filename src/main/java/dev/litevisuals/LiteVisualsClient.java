@@ -15,9 +15,16 @@ import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.Locale;
+
 public class LiteVisualsClient implements ClientModInitializer {
     public static boolean hudEnabled = true;
+    public static boolean fpsEnabled = true;
+    public static boolean coordsEnabled = true;
+    public static boolean facingEnabled = true;
+    public static boolean targetEnabled = true;
     public static boolean hitMarkerEnabled = true;
+
     public static int accentColor = 0xFFB56BFF;
     public static long hitMarkerUntilMs = 0L;
 
@@ -68,7 +75,7 @@ public class LiteVisualsClient implements ClientModInitializer {
         );
 
         HudRenderCallback.EVENT.register(
-            (drawContext, tickCounter) -> renderHud(drawContext)
+            (context, tickCounter) -> renderHud(context)
         );
     }
 
@@ -76,7 +83,7 @@ public class LiteVisualsClient implements ClientModInitializer {
         MinecraftClient client = MinecraftClient.getInstance();
 
         if (client.player == null || client.world == null
-                || client.options.hudHidden) {
+                || client.options.hudHidden || !hudEnabled) {
             return;
         }
 
@@ -87,63 +94,59 @@ public class LiteVisualsClient implements ClientModInitializer {
                 && System.currentTimeMillis() < hitMarkerUntilMs) {
             int cx = width / 2;
             int cy = height / 2;
-            int c = accentColor;
-
-            context.fill(cx - 7, cy - 1, cx - 3, cy + 1, c);
-            context.fill(cx + 3, cy - 1, cx + 7, cy + 1, c);
-            context.fill(cx - 1, cy - 7, cx + 1, cy - 3, c);
-            context.fill(cx - 1, cy + 3, cx + 1, cy + 7, c);
+            context.fill(cx - 7, cy - 1, cx - 3, cy + 1, accentColor);
+            context.fill(cx + 3, cy - 1, cx + 7, cy + 1, accentColor);
+            context.fill(cx - 1, cy - 7, cx + 1, cy - 3, accentColor);
+            context.fill(cx - 1, cy + 3, cx + 1, cy + 7, accentColor);
         }
 
-        if (!hudEnabled) return;
-
-        int x = 7;
-        int y = 7;
+        int x = 8;
+        int y = 8;
         int white = 0xFFF0E8FF;
+        int lines = (fpsEnabled ? 1 : 0)
+                  + (coordsEnabled ? 1 : 0)
+                  + (facingEnabled ? 1 : 0)
+                  + (targetEnabled && client.targetedEntity != null ? 1 : 0);
 
-        context.fill(x - 4, y - 4, x + 130, y + 67, 0xB8101020);
-        context.fill(x - 4, y - 4, x + 130, y - 2, accentColor);
+        if (lines == 0) return;
 
-        context.drawText(
-            client.textRenderer, "LITEVISUALS",
-            x, y, accentColor, false
-        );
-        y += 13;
+        int panelHeight = 20 + lines * 12;
+        context.fill(x - 5, y - 5, x + 160, y + panelHeight, 0xC9101020);
+        context.fill(x - 5, y - 5, x + 160, y - 2, accentColor);
 
-        context.drawText(
-            client.textRenderer,
-            "FPS: " + client.getCurrentFps(),
-            x, y, white, false
-        );
-        y += 11;
+        context.drawText(client.textRenderer, "LITEVISUALS",
+            x, y, accentColor, false);
+        y += 14;
 
-        context.drawText(
-            client.textRenderer,
-            String.format(
-                java.util.Locale.ROOT,
-                "XYZ: %.1f / %.1f / %.1f",
-                client.player.getX(),
-                client.player.getY(),
-                client.player.getZ()
-            ),
-            x, y, white, false
-        );
-        y += 11;
+        if (fpsEnabled) {
+            context.drawText(client.textRenderer,
+                "FPS: " + client.getCurrentFps(), x, y, white, false);
+            y += 12;
+        }
 
-        context.drawText(
-            client.textRenderer,
-            "Facing: " + client.player.getHorizontalFacing().asString(),
-            x, y, white, false
-        );
-        y += 11;
+        if (coordsEnabled) {
+            context.drawText(client.textRenderer,
+                String.format(Locale.ROOT, "Коорд.: %.1f / %.1f / %.1f",
+                    client.player.getX(),
+                    client.player.getY(),
+                    client.player.getZ()),
+                x, y, white, false);
+            y += 12;
+        }
+
+        if (facingEnabled) {
+            context.drawText(client.textRenderer,
+                "Направление: " +
+                    client.player.getHorizontalFacing().asString(),
+                x, y, white, false);
+            y += 12;
+        }
 
         Entity target = client.targetedEntity;
-        if (target != null) {
-            context.drawText(
-                client.textRenderer,
-                "Target: " + target.getName().getString(),
-                x, y, 0xFFFFD166, false
-            );
+        if (targetEnabled && target != null) {
+            context.drawText(client.textRenderer,
+                "Цель: " + target.getName().getString(),
+                x, y, 0xFFFFD166, false);
         }
     }
 }
