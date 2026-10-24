@@ -147,5 +147,3 @@ public class LiteVisualsClient implements ClientModInitializer {
         }
     }
 }
-
-}
