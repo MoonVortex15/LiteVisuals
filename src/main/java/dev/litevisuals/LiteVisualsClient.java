@@ -5,19 +5,33 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
+
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.render.RenderLayer;
+import net.minecraft.client.render.VertexConsumer;
+import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
+import net.minecraft.util.hit.EntityHitResult;
+import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Vec3d;
+
 import org.lwjgl.glfw.GLFW;
 
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 
 public class LiteVisualsClient implements ClientModInitializer {
+
     public static boolean hudEnabled = true;
     public static boolean fpsEnabled = true;
     public static boolean coordsEnabled = true;
@@ -26,10 +40,31 @@ public class LiteVisualsClient implements ClientModInitializer {
     public static boolean hitMarkerEnabled = true;
 
     public static int accentColor = 0xFFB56BFF;
-    public static long hitMarkerUntilMs = 0L;
+
+    // Настройки HitMarker
+    public static int hitMarkerColor = 0xFFFF4040;
+    public static float hitMarkerSize = 0.12f;
+    public static int hitMarkerDurationMs = 450;
 
     private static KeyBinding toggleHudKey;
     private static KeyBinding openMenuKey;
+
+    private static Entity pendingTarget;
+    private static Vec3d pendingPosition;
+    private static int previousHurtTime;
+    private static long pendingTime;
+
+    private static final List<HitMark> HIT_MARKS = new ArrayList<>();
+
+    private static class HitMark {
+        final Vec3d position;
+        final long createdAt;
+
+        HitMark(Vec3d position, long createdAt) {
+            this.position = position;
+            this.createdAt = createdAt;
+        }
+    }
 
     @Override
     public void onInitializeClient() {
@@ -63,13 +98,56 @@ public class LiteVisualsClient implements ClientModInitializer {
                     client.setScreen(new LiteVisualsScreen());
                 }
             }
+
+            long now = System.currentTimeMillis();
+
+            HIT_MARKS.removeIf(mark ->
+                now - mark.createdAt >= Math.max(50, hitMarkerDurationMs)
+            );
+
+            if (client.world == null || client.player == null) {
+                HIT_MARKS.clear();
+                pendingTarget = null;
+                pendingPosition = null;
+                return;
+            }
+
+            if (pendingTarget != null) {
+                if (now - pendingTime > 800
+                        || !pendingTarget.isAlive()) {
+                    pendingTarget = null;
+                    pendingPosition = null;
+                } else if (pendingTarget instanceof LivingEntity living
+                        && living.hurtTime > previousHurtTime) {
+
+                    if (hitMarkerEnabled && pendingPosition != null) {
+                        HIT_MARKS.add(
+                            new HitMark(pendingPosition, now)
+                        );
+                    }
+
+                    pendingTarget = null;
+                    pendingPosition = null;
+                }
+            }
         });
 
         AttackEntityCallback.EVENT.register(
             (player, world, hand, entity, hitResult) -> {
-                if (world.isClient && hitMarkerEnabled) {
-                    hitMarkerUntilMs = System.currentTimeMillis() + 180L;
+                MinecraftClient client = MinecraftClient.getInstance();
+
+                if (world.isClient
+                        && player == client.player
+                        && hitMarkerEnabled
+                        && entity instanceof LivingEntity living
+                        && hitResult != null) {
+
+                    pendingTarget = living;
+                    pendingPosition = hitResult.getPos();
+                    previousHurtTime = living.hurtTime;
+                    pendingTime = System.currentTimeMillis();
                 }
+
                 return ActionResult.PASS;
             }
         );
@@ -77,6 +155,69 @@ public class LiteVisualsClient implements ClientModInitializer {
         HudRenderCallback.EVENT.register(
             (context, tickCounter) -> renderHud(context)
         );
+
+        WorldRenderEvents.AFTER_ENTITIES.register(context -> {
+            MinecraftClient client = MinecraftClient.getInstance();
+
+            if (!hitMarkerEnabled
+                    || client.world == null
+                    || client.player == null
+                    || HIT_MARKS.isEmpty()) {
+                return;
+            }
+
+            var matrices = context.matrixStack();
+            var consumers = context.consumers();
+
+            if (matrices == null || consumers == null) {
+                return;
+            }
+
+            Vec3d camera = context.camera().getPos();
+
+            matrices.push();
+            matrices.translate(-camera.x, -camera.y, -camera.z);
+
+            VertexConsumer lines =
+                consumers.getBuffer(RenderLayer.getLines());
+
+            long now = System.currentTimeMillis();
+
+            for (HitMark mark : HIT_MARKS) {
+                float progress = (now - mark.createdAt)
+                    / (float) Math.max(50, hitMarkerDurationMs);
+
+                if (progress >= 1.0f) {
+                    continue;
+                }
+
+                Vec3d p = mark.position;
+                float size = Math.max(0.02f, hitMarkerSize);
+
+                Box box = new Box(
+                    p.x - size, p.y - size, p.z - size,
+                    p.x + size, p.y + size, p.z + size
+                );
+
+                int color = hitMarkerColor;
+                float red = ((color >> 16) & 255) / 255.0f;
+                float green = ((color >> 8) & 255) / 255.0f;
+                float blue = (color & 255) / 255.0f;
+                float alpha = 1.0f - progress;
+
+                WorldRenderer.drawBox(
+                    matrices,
+                    lines,
+                    box,
+                    red,
+                    green,
+                    blue,
+                    alpha
+                );
+            }
+
+            matrices.pop();
+        });
     }
 
     private static void renderHud(DrawContext context) {
@@ -87,22 +228,10 @@ public class LiteVisualsClient implements ClientModInitializer {
             return;
         }
 
-        int width = client.getWindow().getScaledWidth();
-        int height = client.getWindow().getScaledHeight();
-
-        if (hitMarkerEnabled
-                && System.currentTimeMillis() < hitMarkerUntilMs) {
-            int cx = width / 2;
-            int cy = height / 2;
-            context.fill(cx - 7, cy - 1, cx - 3, cy + 1, accentColor);
-            context.fill(cx + 3, cy - 1, cx + 7, cy + 1, accentColor);
-            context.fill(cx - 1, cy - 7, cx + 1, cy - 3, accentColor);
-            context.fill(cx - 1, cy + 3, cx + 1, cy + 7, accentColor);
-        }
-
         int x = 8;
         int y = 8;
         int white = 0xFFF0E8FF;
+
         int lines = (fpsEnabled ? 1 : 0)
                   + (coordsEnabled ? 1 : 0)
                   + (facingEnabled ? 1 : 0)
@@ -111,42 +240,62 @@ public class LiteVisualsClient implements ClientModInitializer {
         if (lines == 0) return;
 
         int panelHeight = 20 + lines * 12;
-        context.fill(x - 5, y - 5, x + 160, y + panelHeight, 0xC9101020);
+
+        context.fill(
+            x - 5, y - 5, x + 160, y + panelHeight,
+            0xC9101020
+        );
         context.fill(x - 5, y - 5, x + 160, y - 2, accentColor);
 
-        context.drawText(client.textRenderer, "LITEVISUALS",
-            x, y, accentColor, false);
+        context.drawText(
+            client.textRenderer, "LITEVISUALS",
+            x, y, accentColor, false
+        );
         y += 14;
 
         if (fpsEnabled) {
-            context.drawText(client.textRenderer,
-                "FPS: " + client.getCurrentFps(), x, y, white, false);
+            context.drawText(
+                client.textRenderer,
+                "FPS: " + client.getCurrentFps(),
+                x, y, white, false
+            );
             y += 12;
         }
 
         if (coordsEnabled) {
-            context.drawText(client.textRenderer,
-                String.format(Locale.ROOT, "Коорд.: %.1f / %.1f / %.1f",
+            context.drawText(
+                client.textRenderer,
+                String.format(
+                    Locale.ROOT,
+                    "Коорд.: %.1f / %.1f / %.1f",
                     client.player.getX(),
                     client.player.getY(),
-                    client.player.getZ()),
-                x, y, white, false);
+                    client.player.getZ()
+                ),
+                x, y, white, false
+            );
             y += 12;
         }
 
         if (facingEnabled) {
-            context.drawText(client.textRenderer,
-                "Направление: " +
-                    client.player.getHorizontalFacing().asString(),
-                x, y, white, false);
+            context.drawText(
+                client.textRenderer,
+                "Направление: "
+                    + client.player.getHorizontalFacing().asString(),
+                x, y, white, false
+            );
             y += 12;
         }
 
         Entity target = client.targetedEntity;
+
         if (targetEnabled && target != null) {
-            context.drawText(client.textRenderer,
+            context.drawText(
+                client.textRenderer,
                 "Цель: " + target.getName().getString(),
-                x, y, 0xFFFFD166, false);
+                x, y, 0xFFFFD166, false
+            );
         }
     }
 }
+
