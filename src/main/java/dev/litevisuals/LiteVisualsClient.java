@@ -1,361 +1,76 @@
-
 package dev.litevisuals;
 
+import com.google.gson.*;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.util.ActionResult;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
-
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
+import java.nio.file.*;
+import java.util.*;
+import java.io.*;
 
 public class LiteVisualsClient implements ClientModInitializer {
-    public static KeyBinding openMenuKey;
-    public static KeyBinding toggleHudKey;
-
-    public static boolean hudEnabled = true;
-    public static boolean fpsEnabled = true;
-    public static boolean coordsEnabled = true;
-    public static boolean facingEnabled = true;
-    public static boolean targetEnabled = true;
-
-    public static boolean hitMarkerEnabled = true;
-
-    public static int accentColor = 0xFFB56BFF;
-    public static int hitMarkerColor = 0xFFFF4040;
-    public static float hitMarkerSize = 8.0f;
-    public static int hitMarkerDurationMs = 450;
-
-    private static final List<HitMark> HIT_MARKS = new ArrayList<>();
-
-    private static class HitMark {
-        final Vec3d position;
-        final long expiresAt;
-        final int color;
-        final float size;
-
-        HitMark(Vec3d position, long expiresAt, int color, float size) {
-            this.position = position;
-            this.expiresAt = expiresAt;
-            this.color = color;
-            this.size = size;
-        }
-    }
-
-    @Override
-    public void onInitializeClient() {
-        openMenuKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.litevisuals.open_menu",
-                InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_RIGHT_SHIFT,
-                "category.litevisuals"
-        ));
-
-        toggleHudKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-                "key.litevisuals.toggle_hud",
-                InputUtil.Type.KEYSYM,
-                GLFW.GLFW_KEY_H,
-                "category.litevisuals"
-        ));
-
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            while (openMenuKey.wasPressed()) {
-                if (client.currentScreen == null) {
-                    client.setScreen(new LiteVisualsScreen());
-                }
-            }
-
-            while (toggleHudKey.wasPressed()) {
-                hudEnabled = !hudEnabled;
-            }
-
-            long now = System.currentTimeMillis();
-            HIT_MARKS.removeIf(mark -> now >= mark.expiresAt);
-
-            if (!hitMarkerEnabled) {
-                HIT_MARKS.clear();
-            }
-        });
-
-        AttackEntityCallback.EVENT.register(
-                (player, world, hand, entity, hitResult) -> {
-                    if (world.isClient
-                            && hitMarkerEnabled
-                            && entity instanceof LivingEntity living
-                            && living.isAlive()) {
-
-                        Vec3d hitPosition = hitResult != null
-                                ? hitResult.getPos()
-                                : living.getBoundingBox().getCenter();
-
-                        long now = System.currentTimeMillis();
-                        int duration = Math.max(50, hitMarkerDurationMs);
-
-                        HIT_MARKS.add(new HitMark(
-                                hitPosition,
-                                now + duration,
-                                hitMarkerColor,
-                                MathHelper.clamp(hitMarkerSize, 2.0f, 30.0f)
-                        ));
-
-                        if (HIT_MARKS.size() > 30) {
-                            HIT_MARKS.remove(0);
-                        }
-                    }
-
-                    return ActionResult.PASS;
-                }
-        );
-
-        HudRenderCallback.EVENT.register((drawContext, tickCounter) -> {
-            MinecraftClient client = MinecraftClient.getInstance();
-
-            if (client.player == null || client.world == null) {
-                return;
-            }
-
-            drawWorldHitMarkers(drawContext);
-
-            if (hudEnabled) {
-                drawInfoHud(drawContext, client);
-            }
-        });
-    }
-
-    private static void drawInfoHud(
-            DrawContext ctx, MinecraftClient client) {
-
-        int x = 8;
-        int y = 8;
-        int panelWidth = 132;
-        int lineHeight = 12;
-        int rows = 0;
-
-        if (fpsEnabled) rows++;
-        if (coordsEnabled) rows++;
-        if (facingEnabled) rows++;
-        if (targetEnabled) rows++;
-
-        if (rows == 0) {
-            return;
-        }
-
-        int panelHeight = 23 + rows * lineHeight;
-        int accent = accentColor;
-
-        ctx.fill(x, y, x + panelWidth, y + panelHeight, 0xD910101D);
-        ctx.fill(x, y, x + panelWidth, y + 2, accent);
-        ctx.fill(x, y + 2, x + 2, y + panelHeight, accent);
-
-        ctx.drawTextWithShadow(
-                client.textRenderer,
-                "LITEVISUALS",
-                x + 8, y + 7, accent
-        );
-
-        ctx.drawTextWithShadow(
-                client.textRenderer,
-                "CLIENT",
-                x + panelWidth - 37, y + 7, 0xFFAAA8C2
-        );
-
-        int textY = y + 22;
-        int textX = x + 8;
-
-        if (fpsEnabled) {
-            drawHudRow(ctx, "FPS", String.valueOf(client.getCurrentFps()),
-                    textX, textY, 0xFFF0E8FF);
-            textY += lineHeight;
-        }
-
-        if (coordsEnabled) {
-            String coords = String.format(
-                    java.util.Locale.ROOT,
-                    "%d %d %d",
-                    MathHelper.floor(client.player.getX()),
-                    MathHelper.floor(client.player.getY()),
-                    MathHelper.floor(client.player.getZ())
-            );
-
-            drawHudRow(ctx, "XYZ", coords, textX, textY, 0xFFF0E8FF);
-            textY += lineHeight;
-        }
-
-        if (facingEnabled) {
-            drawHudRow(ctx, "DIR", getDirection(client.player.getYaw()),
-                    textX, textY, 0xFFF0E8FF);
-            textY += lineHeight;
-        }
-
-        if (targetEnabled) {
-            Entity target = getTargetEntity();
-
-            if (target instanceof LivingEntity living) {
-                String name = living.getName().getString();
-                if (name.length() > 11) {
-                    name = name.substring(0, 11) + "...";
-                }
-
-                drawHudRow(ctx, "TARGET", name, textX, textY, 0xFFFF9A9A);
-                textY += lineHeight;
-
-                float health = Math.max(0, living.getHealth());
-                float maxHealth = Math.max(1, living.getMaxHealth());
-                int barX = textX;
-                int barY = textY - 2;
-                int barWidth = panelWidth - 16;
-                int filled = Math.round(barWidth * Math.min(1, health / maxHealth));
-
-                ctx.fill(barX, barY, barX + barWidth, barY + 3, 0xFF393344);
-                if (filled > 0) {
-                    ctx.fill(barX, barY, barX + filled, barY + 3, 0xFFFF6B8A);
-                }
-            } else {
-                drawHudRow(ctx, "TARGET", "None", textX, textY, 0xFFAAA8C2);
-            }
-        }
-    }
-
-    private static void drawHudRow(
-            DrawContext ctx, String label, String value,
-            int x, int y, int valueColor) {
-
-        ctx.drawTextWithShadow(
-                MinecraftClient.getInstance().textRenderer,
-                label, x, y, 0xFFAAA8C2
-        );
-
-        int valueX = x + 43;
-
-        ctx.drawTextWithShadow(
-                MinecraftClient.getInstance().textRenderer,
-                value, valueX, y, valueColor
-        );
-    }
-
-    private static void drawWorldHitMarkers(DrawContext ctx) {
-        if (!hitMarkerEnabled || HIT_MARKS.isEmpty()) {
-            return;
-        }
-
-        MinecraftClient client = MinecraftClient.getInstance();
-
-        if (client.gameRenderer == null || client.player == null) {
-            return;
-        }
-
-        long now = System.currentTimeMillis();
-        Iterator<HitMark> iterator = HIT_MARKS.iterator();
-
-        while (iterator.hasNext()) {
-            HitMark mark = iterator.next();
-
-            if (now >= mark.expiresAt) {
-                iterator.remove();
-                continue;
-            }
-
-            Vec3d cameraPos = client.gameRenderer.getCamera().getPos();
-            Vec3d relative = mark.position.subtract(cameraPos);
-
-            double yaw = Math.toRadians(client.gameRenderer.getCamera().getYaw());
-            double pitch = Math.toRadians(client.gameRenderer.getCamera().getPitch());
-
-            double sinYaw = Math.sin(yaw);
-            double cosYaw = Math.cos(yaw);
-            double sinPitch = Math.sin(pitch);
-            double cosPitch = Math.cos(pitch);
-
-            double cameraX = relative.x * cosYaw + relative.z * sinYaw;
-            double cameraY = relative.x * sinYaw * sinPitch
-                    - relative.y * cosPitch
-                    - relative.z * cosYaw * sinPitch;
-            double cameraZ = -relative.x * sinYaw * cosPitch
-                    - relative.y * sinPitch
-                    + relative.z * cosYaw * cosPitch;
-
-            if (cameraZ >= -0.05) {
-                continue;
-            }
-
-            double depth = -cameraZ;
-            double fovRadians = Math.toRadians(70.0);
-            double focalLength = client.getWindow().getScaledHeight()
-                    / (2.0 * Math.tan(fovRadians / 2.0));
-
-            int screenX = (int) Math.round(
-                    client.getWindow().getScaledWidth() / 2.0
-                            + cameraX * focalLength / depth
-            );
-
-            int screenY = (int) Math.round(
-                    client.getWindow().getScaledHeight() / 2.0
-                            + cameraY * focalLength / depth
-            );
-
-            if (screenX < -50 || screenX > client.getWindow().getScaledWidth() + 50
-                    || screenY < -50
-                    || screenY > client.getWindow().getScaledHeight() + 50) {
-                continue;
-            }
-
-            float remaining = (float) (mark.expiresAt - now)
-                    / Math.max(1, hitMarkerDurationMs);
-            int alpha = MathHelper.clamp((int) (remaining * 255), 0, 255);
-            int color = (mark.color & 0x00FFFFFF) | (alpha << 24);
-
-            int size = MathHelper.clamp(Math.round(mark.size), 2, 30);
-            int gap = Math.max(2, size / 3);
-            int thickness = Math.max(1, size / 6);
-
-            // Четыре коротких штриха вокруг точки попадания.
-            ctx.fill(screenX - gap - thickness, screenY - gap - thickness,
-                    screenX - gap + thickness, screenY - gap + thickness, color);
-
-            ctx.fill(screenX + gap - thickness, screenY - gap - thickness,
-                    screenX + gap + thickness, screenY - gap + thickness, color);
-
-            ctx.fill(screenX - gap - thickness, screenY + gap - thickness,
-                    screenX - gap + thickness, screenY + gap + thickness, color);
-
-            ctx.fill(screenX + gap - thickness, screenY + gap - thickness,
-                    screenX + gap + thickness, screenY + gap + thickness, color);
-        }
-    }
-
-    private static String getDirection(float yaw) {
-        float normalized = MathHelper.wrapDegrees(yaw);
-
-        if (normalized >= -45 && normalized < 45) return "S";
-        if (normalized >= 45 && normalized < 135) return "W";
-        if (normalized >= -135 && normalized < -45) return "E";
-        return "N";
-    }
-
-    public static Entity getTargetEntity() {
-        MinecraftClient client = MinecraftClient.getInstance();
-
-        if (client.crosshairTarget instanceof EntityHitResult hit) {
-            return hit.getEntity();
-        }
-
-        return null;
-    }
-
-    public static void clearHitMarker() {
-        HIT_MARKS.clear();
-    }
+ public static KeyBinding openMenuKey, toggleHudKey;
+ public static boolean hudEnabled=true, fpsEnabled=true, coordsEnabled=true, facingEnabled=true, targetEnabled=true;
+ public static boolean arrayListEnabled=true, keystrokesEnabled=true, cpsEnabled=true, healthEnabled=true, armorEnabled=true;
+ public static boolean entityEspEnabled=false, nametagsEnabled=false, hitboxEnabled=false, fullbrightEnabled=false, noFogEnabled=false, weatherVisualsEnabled=false;
+ public static int accentColor=0xFFB56BFF;
+ public static int hudX=8, hudY=8, hudScale=100, keystrokesX=8, keystrokesY=0, cpsX=0, cpsY=0;
+ public static boolean compactHud=false;
+ private static final Gson GSON=new GsonBuilder().setPrettyPrinting().create();
+ private static Path configPath;
+ private static double oldGamma=1.0;
+ private static boolean gammaSaved=false;
+ private static final Deque<Long> leftClicks=new ArrayDeque<>(), rightClicks=new ArrayDeque<>();
+ private static boolean lastLeft=false,lastRight=false;
+
+ @Override public void onInitializeClient() {
+  configPath=FabricLoader.getInstance().getConfigDir().resolve("litevisuals.json"); loadConfig();
+  openMenuKey=KeyBindingHelper.registerKeyBinding(new KeyBinding("key.litevisuals.open_menu",InputUtil.Type.KEYSYM,GLFW.GLFW_KEY_RIGHT_SHIFT,"category.litevisuals"));
+  toggleHudKey=KeyBindingHelper.registerKeyBinding(new KeyBinding("key.litevisuals.toggle_hud",InputUtil.Type.KEYSYM,GLFW.GLFW_KEY_H,"category.litevisuals"));
+  ClientTickEvents.END_CLIENT_TICK.register(c->{
+   while(openMenuKey.wasPressed()) if(c.currentScreen==null)c.setScreen(new LiteVisualsScreen());
+   while(toggleHudKey.wasPressed()){hudEnabled=!hudEnabled;saveConfig();}
+   if(c.player!=null && fullbrightEnabled){if(!gammaSaved){oldGamma=c.options.getGamma().getValue();gammaSaved=true;} c.options.getGamma().setValue(16.0);}
+   else if(gammaSaved){c.options.getGamma().setValue(oldGamma);gammaSaved=false;}
+  });
+  HudRenderCallback.EVENT.register((ctx,tick)->{MinecraftClient c=MinecraftClient.getInstance();if(c.player!=null&&c.world!=null&&hudEnabled)drawHud(ctx,c);});
+ }
+ private static void drawHud(DrawContext d,MinecraftClient c){
+  int x=hudX,y=hudY,line=compactHud?10:12,w=compactHud?132:150;
+  int rows=(fpsEnabled?1:0)+(coordsEnabled?1:0)+(facingEnabled?1:0)+(targetEnabled?1:0);
+  if(rows>0){int h=22+rows*line+8;d.fill(x,y,x+w,y+h,0xD910101D);d.fill(x,y,x+w,y+2,accentColor);d.fill(x,y+2,x+2,y+h,accentColor);d.drawTextWithShadow(c.textRenderer,"LITEVISUALS",x+8,y+7,accentColor);d.drawTextWithShadow(c.textRenderer,"CLIENT",x+w-37,y+7,0xFFAAA8C2);int ty=y+22;
+   if(fpsEnabled){row(d,"FPS",""+c.getCurrentFps(),x+8,ty);ty+=line;}
+   if(coordsEnabled){row(d,"XYZ",String.format(Locale.ROOT,"%d %d %d",MathHelper.floor(c.player.getX()),MathHelper.floor(c.player.getY()),MathHelper.floor(c.player.getZ())),x+8,ty);ty+=line;}
+   if(facingEnabled){row(d,"DIR",direction(c.player.getYaw()),x+8,ty);ty+=line;}
+   if(targetEnabled){Entity e=getTargetEntity();if(e instanceof LivingEntity l){String n=l.getName().getString();if(n.length()>15)n=n.substring(0,15)+"...";row(d,"TARGET",n,x+8,ty);ty+=line;
+     if(healthEnabled){int bw=w-16,fill=Math.round(bw*MathHelper.clamp(l.getHealth()/Math.max(1,l.getMaxHealth()),0,1));d.fill(x+8,ty-1,x+8+bw,ty+3,0xFF393344);if(fill>0)d.fill(x+8,ty-1,x+8+fill,ty+3,0xFFFF6B8A);ty+=5;}
+     if(armorEnabled&&l instanceof PlayerEntity p)row(d,"ARMOR",""+p.getArmor(),x+8,ty);
+    }else row(d,"TARGET","None",x+8,ty);}
+  }
+  if(arrayListEnabled){String[] a={cpsEnabled?"CPS":null,keystrokesEnabled?"Keystrokes":null,targetEnabled?"Target HUD":null,facingEnabled?"Direction":null,coordsEnabled?"Coordinates":null,fpsEnabled?"FPS":null,fullbrightEnabled?"Fullbright":null,noFogEnabled?"No Fog*":null,entityEspEnabled?"Entity ESP*":null,nametagsEnabled?"Nametags*":null,hitboxEnabled?"Hitbox*":null};int yy=8;for(String s:a)if(s!=null){int tw=c.textRenderer.getWidth(s),sx=c.getWindow().getScaledWidth()-tw-10;d.fill(sx-3,yy-2,sx+tw+5,yy+10,0xB910101D);d.fill(sx+tw+3,yy-2,sx+tw+5,yy+10,accentColor);d.drawTextWithShadow(c.textRenderer,s,sx,yy,0xFFF0E8FF);yy+=13;}}
+  if(keystrokesEnabled){long win=c.getWindow().getHandle();int bx=keystrokesX,by=keystrokesY==0?c.getWindow().getScaledHeight()-61:keystrokesY;key(d,c,bx+20,by,"W",win,GLFW.GLFW_KEY_W);key(d,c,bx,by+20,"A",win,GLFW.GLFW_KEY_A);key(d,c,bx+20,by+20,"S",win,GLFW.GLFW_KEY_S);key(d,c,bx+40,by+20,"D",win,GLFW.GLFW_KEY_D);key(d,c,bx+64,by+20,"SP",win,GLFW.GLFW_KEY_SPACE);}
+  if(cpsEnabled){long now=System.currentTimeMillis();trim(leftClicks,now);trim(rightClicks,now);long win=c.getWindow().getHandle();boolean l=GLFW.glfwGetMouseButton(win,0)==1,r=GLFW.glfwGetMouseButton(win,1)==1;if(l&&!lastLeft)leftClicks.addLast(now);if(r&&!lastRight)rightClicks.addLast(now);lastLeft=l;lastRight=r;String s="CPS "+leftClicks.size()+" | "+rightClicks.size();int sx=c.getWindow().getScaledWidth()-c.textRenderer.getWidth(s)-12+cpsX,sy=c.getWindow().getScaledHeight()-20+cpsY;d.fill(sx-4,sy-3,sx+c.textRenderer.getWidth(s)+5,sy+11,0xC910101D);d.drawTextWithShadow(c.textRenderer,s,sx,sy,accentColor);}
+ }
+ private static void row(DrawContext d,String a,String b,int x,int y){d.drawTextWithShadow(MinecraftClient.getInstance().textRenderer,a,x,y,0xFFAAA8C2);d.drawTextWithShadow(MinecraftClient.getInstance().textRenderer,b,x+48,y,0xFFF0E8FF);}
+ private static void key(DrawContext d,MinecraftClient c,int x,int y,String s,long win,int code){boolean down=InputUtil.isKeyPressed(win,code);d.fill(x,y,x+18,y+18,down?0xFF68408D:0xC910101D);d.drawCenteredTextWithShadow(c.textRenderer,s,x+9,y+5,-1);}
+ private static void trim(Deque<Long> q,long n){while(!q.isEmpty()&&n-q.peekFirst()>1000)q.removeFirst();}
+ private static String direction(float yaw){int i=Math.floorMod(Math.round(MathHelper.floor(yaw/45f+0.5f)),8);return new String[]{"S","SW","W","NW","N","NE","E","SE"}[i];}
+ public static Entity getTargetEntity(){MinecraftClient c=MinecraftClient.getInstance();return c.crosshairTarget instanceof EntityHitResult h?h.getEntity():null;}
+ public static void saveConfig(){if(configPath==null)return;try{JsonObject j=new JsonObject();String[] keys={"hudEnabled","fpsEnabled","coordsEnabled","facingEnabled","targetEnabled","arrayListEnabled","keystrokesEnabled","cpsEnabled","healthEnabled","armorEnabled","entityEspEnabled","nametagsEnabled","hitboxEnabled","fullbrightEnabled","noFogEnabled","weatherVisualsEnabled","compactHud"};boolean[] vals={hudEnabled,fpsEnabled,coordsEnabled,facingEnabled,targetEnabled,arrayListEnabled,keystrokesEnabled,cpsEnabled,healthEnabled,armorEnabled,entityEspEnabled,nametagsEnabled,hitboxEnabled,fullbrightEnabled,noFogEnabled,weatherVisualsEnabled,compactHud};for(int i=0;i<keys.length;i++)j.addProperty(keys[i],vals[i]);j.addProperty("accentColor",accentColor);j.addProperty("hudX",hudX);j.addProperty("hudY",hudY);j.addProperty("keystrokesX",keystrokesX);j.addProperty("keystrokesY",keystrokesY);j.addProperty("cpsX",cpsX);j.addProperty("cpsY",cpsY);Files.createDirectories(configPath.getParent());try(Writer out=Files.newBufferedWriter(configPath)){GSON.toJson(j,out);}}catch(Exception e){System.err.println("[LiteVisuals] Save failed: "+e.getMessage());}}
+ private static void loadConfig(){if(configPath==null||!Files.exists(configPath))return;try(Reader in=Files.newBufferedReader(configPath)){JsonObject j=GSON.fromJson(in,JsonObject.class);if(j==null)return;hudEnabled=b(j,"hudEnabled",hudEnabled);fpsEnabled=b(j,"fpsEnabled",fpsEnabled);coordsEnabled=b(j,"coordsEnabled",coordsEnabled);facingEnabled=b(j,"facingEnabled",facingEnabled);targetEnabled=b(j,"targetEnabled",targetEnabled);arrayListEnabled=b(j,"arrayListEnabled",arrayListEnabled);keystrokesEnabled=b(j,"keystrokesEnabled",keystrokesEnabled);cpsEnabled=b(j,"cpsEnabled",cpsEnabled);healthEnabled=b(j,"healthEnabled",healthEnabled);armorEnabled=b(j,"armorEnabled",armorEnabled);entityEspEnabled=b(j,"entityEspEnabled",entityEspEnabled);nametagsEnabled=b(j,"nametagsEnabled",nametagsEnabled);hitboxEnabled=b(j,"hitboxEnabled",hitboxEnabled);fullbrightEnabled=b(j,"fullbrightEnabled",fullbrightEnabled);noFogEnabled=b(j,"noFogEnabled",noFogEnabled);weatherVisualsEnabled=b(j,"weatherVisualsEnabled",weatherVisualsEnabled);compactHud=b(j,"compactHud",compactHud);accentColor=i(j,"accentColor",accentColor);hudX=i(j,"hudX",hudX);hudY=i(j,"hudY",hudY);keystrokesX=i(j,"keystrokesX",keystrokesX);keystrokesY=i(j,"keystrokesY",keystrokesY);cpsX=i(j,"cpsX",cpsX);cpsY=i(j,"cpsY",cpsY);}catch(Exception e){System.err.println("[LiteVisuals] Load failed: "+e.getMessage());}}
+ private static boolean b(JsonObject j,String k,boolean d){return j.has(k)?j.get(k).getAsBoolean():d;}
+ private static int i(JsonObject j,String k,int d){return j.has(k)?j.get(k).getAsInt():d;}
 }
